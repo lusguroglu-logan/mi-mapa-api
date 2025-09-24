@@ -10,12 +10,12 @@ app.use(cors()); // Habilitar CORS para que el mapa pueda hacer peticiones
 // --- CONFIGURACIÓN DE LA BASE DE DATOS ---
 // Usa las credenciales del CONNECTION POOLER de Supabase
 const dbConfig = {
-  host: "aws-1-sa-east-1.pooler.supabase.com",
-  port: 6543,
-  database: "postgres",
-  user: "postgres.pvfkmhikrhxdciuypxru",
-  password: "j2OQpNfA4CNK1z3f",
-  ssl: { rejectUnauthorized: false } // Necesario para conexiones a Supabase
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: { rejectUnauthorized: false }
 };
 
 const pool = new Pool(dbConfig);
