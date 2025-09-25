@@ -35,7 +35,7 @@
 
 <div class="search-container">
     <h4>Búsqueda de POIs</h4>
-    <label for="province-select">Provincia:</label>
+    <label for="province-select">Comunidad Autónoma:</label>
     <select id="province-select"></select>
     
     <label for="industry-select">Industria:</label>
@@ -53,17 +53,18 @@
     }).addTo(map);
 
     // --- CONFIGURACIÓN DE LOS MENÚS DESPLEGABLES ---
-    // NOTA: Los valores deben coincidir con los datos en tu base de datos y API
+    // Nota: El valor (ej. "La Rioja") debe coincidir EXACTAMENTE con el de la columna "nombre" en tu tabla "limites_administrativos"
     const provincias = {
-        "La Rioja": "La Rioja" 
-        // Agrega aquí más provincias a medida que proceses sus datos
+        "La Rioja": "La Rioja",
+        "Comunidad de Madrid": "Comunidad de Madrid"
+        // Agrega aquí más comunidades a medida que proceses sus límites
     };
 
+    // Nota: El valor (ej. "gastronomia") debe coincidir EXACTAMENTE con las claves de tu objeto "industryTags" en la API
     const industrias = {
         "Gastronomía": "gastronomia",
-        "Salud": "salud",
+        "Salud y Bienestar": "salud",
         "Automotor": "automotor"
-        // Agrega más industrias que hayas definido en tu API
     };
     
     // Lógica para poblar los menús al cargar la página
@@ -71,7 +72,7 @@
         const provinceSelect = document.getElementById('province-select');
         const industrySelect = document.getElementById('industry-select');
 
-        provinceSelect.innerHTML = '<option value="">-- Seleccione Provincia --</option>';
+        provinceSelect.innerHTML = '<option value="">-- Seleccione Comunidad --</option>';
         for (const provincia in provincias) {
             provinceSelect.innerHTML += `<option value="${provincias[provincia]}">${provincia}</option>`;
         }
@@ -90,22 +91,19 @@
         const industria = document.getElementById('industry-select').value;
 
         if (!provincia || !industria) {
-            alert("Por favor, seleccione una provincia y una industria.");
+            alert("Por favor, seleccione una comunidad y una industria.");
             return;
         }
 
-        // Limpiar mapa y deshabilitar botón
         if (window.markersLayer) {
             window.markersLayer.clearLayers();
         } else {
-            // Usamos FeatureGroup para poder usar .getBounds()
             window.markersLayer = L.featureGroup().addTo(map);
         }
         const searchButton = document.getElementById('search-button');
         searchButton.innerText = 'Buscando...';
         searchButton.disabled = true;
 
-        // Construir la URL de nuestra API
         const requestUrl = `${miApiUrl}?provincia=${encodeURIComponent(provincia)}&industria=${encodeURIComponent(industria)}`;
 
         try {
@@ -113,12 +111,11 @@
             if (!response.ok) {
                 throw new Error(`Error de red: ${response.status}`);
             }
-            const data = await response.json(); // La API ya devuelve GeoJSON
+            const data = await response.json();
             
             if (data.features.length === 0) {
                 alert("No se encontraron resultados para esta búsqueda.");
             } else {
-                // L.geoJSON es la forma más eficiente de añadir datos GeoJSON a Leaflet
                 const newLayer = L.geoJSON(data, {
                     onEachFeature: function (feature, layer) {
                         const nombre = feature.properties.name || "Sin nombre";
@@ -126,8 +123,6 @@
                     }
                 });
                 window.markersLayer.addLayer(newLayer);
-
-                // Ajusta la vista del mapa a los marcadores encontrados
                 map.fitBounds(window.markersLayer.getBounds(), { padding: [50, 50] });
             }
 
