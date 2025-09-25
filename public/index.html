@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapa Interactivo con API Propia</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { height: 100vh; width: 100%; }
+        .search-container {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .search-container label { font-size: 12px; font-weight: bold; }
+        .search-container select, .search-container button { padding: 8px; border-radius: 4px; border: 1px solid #ccc; }
+        .search-container button { background-color: #007bff; color: white; cursor: pointer; border: none; }
+        .search-container button:disabled { background-color: #aaa; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="search-container">
+    <h4>Búsqueda de POIs</h4>
+    
+    <label for="province-select">Provincia:</label>
+    <select id="province-select"></select>
+    
+    <label for="industry-select">Industria:</label>
+    <select id="industry-select"></select>
+    
+    <button id="search-button" onclick="buscarPOIs()">Buscar</button>
+</div>
+
+<script>
+    // Inicialización del mapa
+    const map = L.map('map').setView([-38, -63], 4); // Centrado en Argentina
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    // --- CONFIGURACIÓN DE LOS MENÚS DESPLEGABLES ---
+    const provincias = {
+        "La Rioja": "la-rioja" // El valor es el "slug" que usamos para nombrar los archivos
+        // Agrega aquí más provincias a medida que proceses sus datos
+    };
+
+    const industrias = {
+        "Gastronomía": "gastronomia",
+        "Salud y Bienestar": "salud_y_bienestar"
+        // Agrega más industrias que hayas procesado
+    };
+    
+    // --- LÓGICA DE LA INTERFAZ ---
+    window.onload = function() {
+        const provinceSelect = document.getElementById('province-select');
+        const industrySelect = document.getElementById('industry-select');
+
+        provinceSelect.innerHTML = '<option value="">-- Seleccione Provincia --</option>';
+        for (const provincia in provincias) {
+            provinceSelect.innerHTML += `<option value="${provincias[provincia]}">${provincia}</option>`;
+        }
+
+        industrySelect.innerHTML = '<option value="">-- Seleccione Industria --</option>';
+        for (const industria in industrias) {
+            industrySelect.innerHTML += `<option value="${industrias[industria]}">${industria}</option>`;
+        }
+    };
+    
+    // --- FUNCIÓN PRINCIPAL DE BÚSQUEDA ---
+    const miApiUrl = 'https://mi-mapa-api.vercel.app/api/pois'; // <-- TU URL DE VERCEL
+    
+    async function buscarPOIs() {
+        const provincia = document.getElementById('province-select').value;
+        const industria = document.getElementById('industry-select').value;
+
+        if (!provincia || !industria) {
+            alert("Por favor, seleccione una provincia y una industria.");
+            return;
+        }
+
+        // Limpiar mapa y deshabilitar botón
+        if (window.markersLayer) {
+            window.markersLayer.clearLayers();
+        } else {
+            window.markersLayer = L.featureGroup().addTo(map);
+        }
+        const searchButton = document.getElementById('search-button');
+        searchButton.innerText = 'Buscando...';
+        searchButton.disabled = true;
+
+        // Construir la URL de nuestra API
+        const requestUrl = `${miApiUrl}?provincia=${provincia}&industria=${industria}`;
+
+        try {
+            const response = await fetch(requestUrl);
+            if (!response.ok) {
+                throw new Error(`Error de red: ${response.status}`);
+            }
+            const data = await response.json(); // La API ya devuelve GeoJSON
+            
+            if (data.features.length === 0) {
+                alert("No se encontraron resultados para esta búsqueda.");
+            } else {
+                // Usamos L.geoJSON, una forma muy eficiente de añadir datos GeoJSON a Leaflet
+                L.geoJSON(data, {
+                    onEachFeature: function (feature, layer) {
+                        const nombre = feature.properties.name || "Sin nombre";
+                        layer.bindPopup(`<b>${nombre}</b>`);
+                    }
+                }).addTo(window.markersLayer);
+
+                // Ajusta la vista del mapa a los marcadores encontrados
+                map.fitBounds(window.markersLayer.getBounds(), { padding: [50, 50] });
+            }
+
+        } catch (error) {
+            console.error('Error al consultar la API:', error);
+            alert('Hubo un error al realizar la búsqueda.');
+        } finally {
+            searchButton.innerText = 'Buscar';
+            searchButton.disabled = false;
+        }
+    }
+</script>
+
+</body>
+</html>

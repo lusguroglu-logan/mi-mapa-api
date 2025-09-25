@@ -1,0 +1,12 @@
+# Dependencias de Node
+node_modules/
+
+# Archivos de datos, descargas y carpetas de datos
+*.zip
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.geojson
+SHP_ETRS89/
