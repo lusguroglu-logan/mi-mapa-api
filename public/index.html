@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Mapa Interactivo con API Propia</title>
+    <title>Mapa Interactivo de POIs</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -35,8 +35,8 @@
 
 <div class="search-container">
     <h4>Búsqueda de POIs</h4>
-    <label for="province-select">Comunidad Autónoma:</label>
-    <select id="province-select"></select>
+    <label for="region-select">Región:</label>
+    <select id="region-select"></select>
     
     <label for="industry-select">Industria:</label>
     <select id="industry-select"></select>
@@ -46,36 +46,51 @@
 
 <script>
     // Inicialización del mapa
-    const map = L.map('map').setView([40.4, -3.7], 6); // Centrado en España
+    const map = L.map('map').setView([15, -40], 3); // Vista general
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap &copy; CARTO'
     }).addTo(map);
 
     // --- CONFIGURACIÓN DE LOS MENÚS DESPLEGABLES ---
-    // Nota: El valor (ej. "La Rioja") debe coincidir EXACTAMENTE con el de la columna "nombre" en tu tabla "limites_administrativos"
-    const provincias = {
+    const regiones = {
+        "--- España ---": { disabled: true },
         "La Rioja": "La Rioja",
         "Comunidad de Madrid": "Comunidad de Madrid",
-        "Argentina": "Argentina", // El valor no importa mucho para esta prueba
-        // Agrega aquí más comunidades a medida que proceses sus límites
+        "--- Argentina ---": { disabled: true },
+        "Buenos Aires (CABA)": "Ciudad Autónoma de Buenos Aires",
+        "Córdoba": "Córdoba",
+        "Santa Fe": "Santa Fe",
+        "Mendoza": "Mendoza",
+        "Neuquén": "Neuquén"
+        // Agrega aquí más provincias o comunidades...
     };
 
-    // Nota: El valor (ej. "gastronomia") debe coincidir EXACTAMENTE con las claves de tu objeto "industryTags" en la API
     const industrias = {
-        "Gastronomía": "gastronomia",
-        "Salud y Bienestar": "salud",
-        "Automotor": "automotor"
+        "Finanzas": "finance",
+        "Salud": "salud",
+        "Automóviles": "automobiles",
+        "Educación": "education",
+        "Retail (General)": "retail",
+        "Supermercados": "supermarkets",
+        "Deportes": "sports",
+        "Entretenimiento": "entertainment",
+        "Tecnología": "technology"
     };
     
-    // Lógica para poblar los menús al cargar la página
+    // Lógica para poblar los menús
     window.onload = function() {
-        const provinceSelect = document.getElementById('province-select');
+        const regionSelect = document.getElementById('region-select');
         const industrySelect = document.getElementById('industry-select');
 
-        provinceSelect.innerHTML = '<option value="">-- Seleccione Comunidad --</option>';
-        for (const provincia in provincias) {
-            provinceSelect.innerHTML += `<option value="${provincias[provincia]}">${provincia}</option>`;
+        regionSelect.innerHTML = '<option value="">-- Seleccione Región --</option>';
+        for (const key in regiones) {
+            const value = regiones[key];
+            if (typeof value === 'object' && value.disabled) {
+                regionSelect.innerHTML += `<option disabled style="font-weight: bold;">${key}</option>`;
+            } else {
+                regionSelect.innerHTML += `<option value="${value}">${key}</option>`;
+            }
         }
 
         industrySelect.innerHTML = '<option value="">-- Seleccione Industria --</option>';
@@ -85,22 +100,20 @@
     };
     
     // --- FUNCIÓN PRINCIPAL DE BÚSQUEDA ---
-    const miApiUrl = 'https://mi-mapa-api.vercel.app/api/pois'; // TU URL DE VERCEL
+    const miApiUrl = 'https://mi-mapa-api.vercel.app/api/pois';
     
     async function buscarPOIs() {
-        const provincia = document.getElementById('province-select').value;
+        const provincia = document.getElementById('region-select').value;
         const industria = document.getElementById('industry-select').value;
 
         if (!provincia || !industria) {
-            alert("Por favor, seleccione una comunidad y una industria.");
+            alert("Por favor, seleccione una región y una industria.");
             return;
         }
 
-        if (window.markersLayer) {
-            window.markersLayer.clearLayers();
-        } else {
-            window.markersLayer = L.featureGroup().addTo(map);
-        }
+        if (window.markersLayer) window.markersLayer.clearLayers();
+        else window.markersLayer = L.featureGroup().addTo(map);
+        
         const searchButton = document.getElementById('search-button');
         searchButton.innerText = 'Buscando...';
         searchButton.disabled = true;
@@ -110,7 +123,8 @@
         try {
             const response = await fetch(requestUrl);
             if (!response.ok) {
-                throw new Error(`Error de red: ${response.status}`);
+                const errorData = await response.json();
+                throw new Error(errorData.error || `Error de red: ${response.status}`);
             }
             const data = await response.json();
             
@@ -129,7 +143,7 @@
 
         } catch (error) {
             console.error('Error al consultar la API:', error);
-            alert('Hubo un error al realizar la búsqueda.');
+            alert(`Hubo un error al realizar la búsqueda: ${error.message}`);
         } finally {
             searchButton.innerText = 'Buscar';
             searchButton.disabled = false;
