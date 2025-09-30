@@ -1,13 +1,12 @@
-// Importar las librerías necesarias
+// api/index.js
+
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 
-// Crear la aplicación del servidor
 const app = express();
-app.use(cors()); // Habilitar CORS
+app.use(cors());
 
-// --- CONFIGURACIÓN DE LA BASE DE DATOS (lee desde las Variables de Entorno de Vercel) ---
 const dbConfig = {
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
@@ -19,16 +18,20 @@ const dbConfig = {
 
 const pool = new Pool(dbConfig);
 
-// --- MAPEO DE INDUSTRIAS ---
-// Mapeo de categorías amigables a consultas de tags en formato HSTORE
-const industryTags = {
-    gastronomia: `(tags @> '"amenity"=>"restaurant"' OR tags @> '"amenity"=>"cafe"' OR tags @> '"amenity"=>"bar"')`,
-    salud: `(tags @> '"amenity"=>"pharmacy"' OR tags @> '"amenity"=>"doctors"')`,
-    automotor: `(tags @> '"shop"="car_repair"' OR tags @> '"amenity"="fuel"')`
-    // Puedes añadir más industrias aquí
+// Mapeo de industrias a pares de [clave, valor] para la consulta
+const industryTagsMap = {
+    finance: [['amenity', 'bank'], ['amenity', 'atm'], ['office', 'financial']],
+    salud: [['amenity', 'hospital'], ['amenity', 'doctors'], ['amenity', 'clinic'], ['amenity', 'pharmacy']],
+    automobiles: [['amenity', 'fuel'], ['shop', 'car_rental'], ['shop', 'car'], ['shop', 'car_repair']],
+    education: [['amenity', 'university'], ['amenity', 'college'], ['amenity', 'school']],
+    retail: [['shop', null]], // Busca cualquier cosa que tenga la clave 'shop'
+    cpg: [['shop', 'supermarket'], ['shop', 'convenience'], ['shop', 'grocery']],
+    supermarkets: [['shop', 'supermarket']],
+    sports: [['leisure', 'stadium'], ['leisure', 'sports_centre'], ['leisure', 'pitch']],
+    entertainment: [['amenity', 'cinema'], ['amenity', 'theatre'], ['amenity', 'nightclub'], ['tourism', 'museum']],
+    technology: [['shop', 'electronics'], ['shop', 'computer'], ['office', 'it']]
 };
 
-// --- RUTA PRINCIPAL PARA BUSCAR PUNTOS DE INTERÉS (POIs) ---
 app.get('/api/pois', async (req, res) => {
   const { provincia, industria } = req.query;
 
@@ -36,27 +39,42 @@ app.get('/api/pois', async (req, res) => {
     return res.status(400).json({ error: 'Faltan los parámetros "provincia" e "industria"' });
   }
 
-  const tagQuery = industryTags[industria];
-  if (!tagQuery) {
+  const tags = industryTagsMap[industria];
+  if (!tags) {
     return res.status(400).json({ error: 'Industria no válida' });
   }
 
-  // Consulta SQL Geoespacial
-  // Une 'pois' y 'limites_administrativos' y usa ST_Within para filtrar geográficamente
+  // --- CONSTRUCCIÓN DE CONSULTA SEGURA CON PARÁMETROS ---
+  let queryValues = [provincia];
+  let hstoreConditions = tags.map((tag, index) => {
+    const key = tag[0];
+    const value = tag[1];
+    if (value === null) {
+      // Condición para "existe la clave"
+      queryValues.push(key);
+      return `exist(p.tags, $${queryValues.length})`;
+    } else {
+      // Condición para "clave => valor"
+      queryValues.push(key);
+      queryValues.push(value);
+      return `(p.tags -> $${queryValues.length - 1} = $${queryValues.length})`;
+    }
+  }).join(' OR ');
+
   const sqlQuery = {
     text: `
-      SELECT id, name, tags, ST_AsGeoJSON(geom) AS geometry
-      FROM pois
-      WHERE (tags @> '"is_in:country_code"=>"AR"' OR tags @> '"addr:country"=>"AR"') AND ${tagQuery};
-      `,
-    values: [] // No necesitamos el valor de provincia por ahora
+      SELECT p.id, p.name, p.tags, ST_AsGeoJSON(p.geom) AS geometry
+      FROM pois AS p
+      JOIN limites_administrativos AS l ON ST_Intersects(p.geom, l.geom)
+      WHERE l.nombre = $1 AND (${hstoreConditions});
+    `,
+    values: queryValues
   };
 
   try {
     console.log(`Ejecutando consulta geoespacial para: provincia=${provincia}, industria=${industria}`);
     const result = await pool.query(sqlQuery);
     
-    // Convertir el resultado a formato GeoJSON, que Leaflet entiende
     const geojson = {
       type: "FeatureCollection",
       features: result.rows.map(row => ({
@@ -74,28 +92,5 @@ app.get('/api/pois', async (req, res) => {
   }
 });
 
-// --- RUTA OPCIONAL PARA OBTENER LOS LÍMITES DE UNA PROVINCIA ---
-app.get('/api/limites', async (req, res) => {
-    const { provincia } = req.query;
-    if (!provincia) {
-        return res.status(400).json({ error: 'Falta el parámetro "provincia"' });
-    }
-    const sqlQuery = {
-        text: `SELECT nombre, ST_AsGeoJSON(geom) as geometry FROM limites_administrativos WHERE nombre = $1;`,
-        values: [provincia]
-    };
-    try {
-        const result = await pool.query(sqlQuery);
-        res.status(200).json(result.rows.map(row => ({
-            name: row.nombre,
-            geometry: JSON.parse(row.geometry)
-        })));
-    } catch (error) {
-        console.error('Error en la consulta de límites:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
-    }
-});
-
-
-// Exportar la app para que Vercel la pueda usar
+// (El resto de la API, como la ruta /api/limites, sigue igual)
 module.exports = app;
