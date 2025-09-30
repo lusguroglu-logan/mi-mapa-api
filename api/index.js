@@ -45,12 +45,11 @@ app.get('/api/pois', async (req, res) => {
   // Une 'pois' y 'limites_administrativos' y usa ST_Within para filtrar geográficamente
   const sqlQuery = {
     text: `
-      SELECT p.id, p.name, p.tags, ST_AsGeoJSON(p.geom) AS geometry
-      FROM pois AS p
-      JOIN limites_administrativos AS l ON ST_Within(p.geom, l.geom)
-      WHERE l.nombre = $1 AND ${tagQuery};
-    `,
-    values: [provincia]
+      SELECT id, name, tags, ST_AsGeoJSON(geom) AS geometry
+      FROM pois
+      WHERE (tags @> '"is_in:country_code"=>"AR"' OR tags @> '"addr:country"=>"AR"') AND ${tagQuery};
+      `,
+    values: [] // No necesitamos el valor de provincia por ahora
   };
 
   try {
