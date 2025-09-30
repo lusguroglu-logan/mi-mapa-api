@@ -7,10 +7,17 @@ import psycopg2
 from psycopg2.extras import execute_values, register_hstore
 from tqdm import tqdm
 
-# ... (CONFIGURACIÓN PRINCIPAL - SIN CAMBIOS)
+# ==============================================================================
+# --- CONFIGURACIÓN PRINCIPAL ---
+# ==============================================================================
+
 COUNTRIES_TO_PROCESS = {
-    #"argentina": {"url": "https://download.geofabrik.de/south-america/argentina-latest.osm.pbf"},
-    "chile": {"url": "https://download.geofabrik.de/south-america/chile-latest.osm.pbf"},
+    "argentina": {
+        "url": "https://download.geofabrik.de/south-america/argentina-latest.osm.pbf",
+        "limites_file": "limites_argentina.geojson"
+    },
+    #"chile": {"url": "https://download.geofabrik.de/south-america/chile-latest.osm.pbf"
+    #          , "limites_file": "provincias_chile.geojson"},
     #"uruguay": {"url": "https://download.geofabrik.de/south-america/uruguay-latest.osm.pbf"},
     #"peru": {"url": "https://download.geofabrik.de/south-america/peru-latest.osm.pbf"},
     #"colombia": {"url": "https://download.geofabrik.de/south-america/colombia-latest.osm.pbf"},
@@ -30,15 +37,18 @@ COUNTRIES_TO_PROCESS = {
     #"italia": {"url": "https://download.geofabrik.de/europe/italy-latest.osm.pbf"},
 
 }
+
 DB_CONFIG = {
     "host": "aws-1-sa-east-1.pooler.supabase.com", "port": "6543", "dbname": "postgres",
     "user": "postgres.pvfkmhikrhxdciuypxru", "password": "j2OQpNfA4CNK1z3f"
 }
+
 OGR2OGR_FILTER = "other_tags LIKE '%\"amenity\"=>%' OR other_tags LIKE '%\"shop\"=>%' OR other_tags LIKE '%\"tourism\"=>%' OR other_tags LIKE '%\"office\"=>%' OR other_tags LIKE '%\"leisure\"=>%' OR other_tags LIKE '%\"sport\"=>%' OR other_tags LIKE '%\"healthcare\"=>%' OR other_tags LIKE '%\"building\"=>%' OR other_tags LIKE '%\"railway\"=>%'"
 
 # ==============================================================================
 # --- LÓGICA DEL PIPELINE ---
 # ==============================================================================
+
 def download_file(url, filename):
     # ... (sin cambios)
     print(f"Descargando '{filename}' desde {url}...")
@@ -58,58 +68,45 @@ def download_file(url, filename):
         print(f"ERROR: Falló la descarga de {url}. Error: {e}")
         return False
 
-def convert_pbf_to_geojson(pbf_path, geojson_path):
-    print(f"Convirtiendo '{pbf_path}' a GeoJSON filtrado...")
-    
-    # --- CAMBIO APLICADO ---
-    # Borra el archivo de salida si ya existe para evitar el error.
-    if os.path.exists(geojson_path):
-        print(f"El archivo de salida '{geojson_path}' ya existe. Eliminándolo...")
-        try:
-            os.remove(geojson_path)
-        except OSError as e:
-            print(f"ERROR: No se pudo eliminar el archivo antiguo. Error: {e}")
-            return False
+def convert_province_to_geojson(pbf_path, province_geom, geojson_path):
+    """Recorta el PBF por la geometría de una provincia y lo convierte a GeoJSON."""
+    # Guardar la geometría de la provincia en un archivo temporal
+    clip_src_file = "temp_clip.geojson"
+    with open(clip_src_file, 'w') as f:
+        json.dump(province_geom, f)
 
     command = [
         'ogr2ogr', '-f', 'GeoJSON', '-overwrite',
+        '-clipsrc', clip_src_file,
         '-where', OGR2OGR_FILTER,
         geojson_path, pbf_path, 'points'
     ]
     try:
         subprocess.run(command, check=True, capture_output=True, text=True)
-        print("Conversión completada con éxito.")
+        os.remove(clip_src_file) # Limpiar el archivo temporal
         return True
     except subprocess.CalledProcessError as e:
-        print("ERROR: Falló la conversión con ogr2ogr.")
-        print(f"Comando: {command}")
-        print(f"Error: {e.stderr}")
+        print(f"\nERROR: Falló la conversión para una provincia. Error: {e.stderr}")
+        os.remove(clip_src_file)
         return False
 
 def upload_geojson_to_supabase(geojson_path):
     # ... (sin cambios)
-    print(f"Iniciando carga de '{geojson_path}' a Supabase...")
     try:
         with psycopg2.connect(**DB_CONFIG, connect_timeout=15) as conn:
-            print("-> Conexión a Supabase exitosa.")
             register_hstore(conn)
             with open(geojson_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
             features = data.get('features', [])
-            total_features = len(features)
-            if total_features == 0:
-                print("-> No se encontraron puntos de interés en el archivo. Saltando carga.")
-                return True
+            if not features: return True
 
-            print(f"-> Se encontraron {total_features} POIs. Preparando para la carga por lotes...")
             data_to_insert = []
             for feature in features:
-                properties = feature.get('properties', {})
-                geometry = feature.get('geometry', {})
+                properties, geometry = feature.get('properties', {}), feature.get('geometry', {})
                 if not properties or not geometry or geometry.get('type') != 'Point': continue
                 name = properties.get('name')
-                hstore_properties = {str(k).replace('"', '""'): str(v).replace('"', '""') if v is not None else None for k, v in properties.items()}
+                hstore_properties = {str(k): str(v) if v is not None else None for k, v in properties.items()}
                 coords = geometry.get('coordinates')
                 if not coords or len(coords) < 2: continue
                 lon, lat = coords[0], coords[1]
@@ -120,48 +117,47 @@ def upload_geojson_to_supabase(geojson_path):
                 sql = "INSERT INTO pois (name, tags, geom) VALUES %s"
                 execute_values(cur, sql, data_to_insert, page_size=500)
                 conn.commit()
-            
-            print(f"-> ¡Carga completada! Se insertaron {len(data_to_insert)} POIs.")
             return True
     except Exception as e:
-        print(f"ERROR: Falló la carga a Supabase. Error: {e}")
+        print(f"\nERROR: Falló la carga a Supabase para una provincia. Error: {e}")
         return False
-        
-def main():
-    # ... (sin cambios)
-    print("--- INICIANDO PIPELINE DE CARGA DE DATOS GEOESPACIALES ---")
-    
-    try:
-        with psycopg2.connect(**DB_CONFIG, connect_timeout=15) as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS pois (id SERIAL PRIMARY KEY, name TEXT, tags HSTORE, geom GEOMETRY(Point, 4326));
-                    CREATE INDEX IF NOT EXISTS pois_geom_idx ON pois USING GIST (geom);
-                """)
-                conn.commit()
-                print("Tabla 'pois' y su índice espacial verificados/creados.")
-    except Exception as e:
-        print(f"CRÍTICO: No se pudo conectar a la base de datos para crear la tabla. Abortando. Error: {e}")
-        return
 
-    for country, info in COUNTRIES_TO_PROCESS.items():
-        print(f"\n================ Procesando: {country.upper()} ================")
-        pbf_file = f"{country}-latest.osm.pbf"
-        geojson_file = f"{country}_pois_filtrados.geojson"
+def main():
+    print("--- INICIANDO PIPELINE DE CARGA AUTOMATIZADO ---")
+    
+    # ... (la parte de crear la tabla sigue igual)
+
+    for country_name, info in COUNTRIES_TO_PROCESS.items():
+        print(f"\n================ Procesando País: {country_name.upper()} ================")
+        pbf_file = f"{country_name}-latest.osm.pbf"
+        limites_file = info["limites_file"]
+
+        if not os.path.exists(limites_file):
+            print(f"CRÍTICO: No se encuentra el archivo de límites '{limites_file}'. Saltando país.")
+            continue
         
         if not download_file(info["url"], pbf_file): continue
-        if not convert_pbf_to_geojson(pbf_file, geojson_file):
-            try: os.remove(pbf_file)
-            except: pass
-            continue
-        upload_geojson_to_supabase(geojson_file)
+
+        with open(limites_file, 'r', encoding='utf-8') as f:
+            limites_data = json.load(f)
+        
+        provincias = limites_data.get('features', [])
+        print(f"Se procesarán {len(provincias)} subdivisiones para {country_name.upper()}.")
+
+        for provincia in tqdm(provincias, desc=f"Procesando {country_name.upper()}", unit="provincia"):
+            prov_name = provincia['properties'].get('nombre') or provincia['properties'].get('NAMEUNIT')
+            prov_geom = provincia['geometry']
             
-        print("Limpiando archivos temporales...")
-        try:
-            os.remove(pbf_file)
-            os.remove(geojson_file)
-        except OSError as e:
-            print(f"Error al limpiar archivos: {e}")
+            if not prov_name or not prov_geom: continue
+            
+            geojson_file = f"temp_{prov_name.replace(' ', '_')}.geojson"
+            
+            if convert_province_to_geojson(pbf_file, prov_geom, geojson_file):
+                upload_geojson_to_supabase(geojson_file)
+                os.remove(geojson_file)
+        
+        print(f"Limpiando el archivo PBF para {country_name.upper()}...")
+        os.remove(pbf_file)
         print("----------------------------------------------------")
         
     print("\n--- PIPELINE COMPLETADO ---")
